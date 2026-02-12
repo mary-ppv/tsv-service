@@ -107,7 +107,7 @@ make sqlboiler
 
 ## Запуск сервиса
 
-set -a; source .env; set +a
+set -a; source .env; set +a; 
 make run
 
 Сервис стартует на HTTP_ADDR (по умолчанию :8080).
@@ -123,9 +123,6 @@ GET /api/admin/units/:unit_guid/records?page=1&limit=20
 
 Получить отчёты по unit_guid:
 GET /api/admin/units/:unit_guid/reports?page=1&limit=20
-
-Импорт справочника/Excel (если реализовано):
-POST /api/admin/imports/source-data
 
 ⸻
 
