@@ -4,34 +4,41 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
+	"tsv-service/internal/transport/http/controllers"
 
-	"tsv-service/internal/services/reports"
+	"github.com/gin-gonic/gin"
 )
 
 type ReportsController struct {
-	svc *reports.Service
+	controllers.Base
 }
 
-func NewReportsController(svc *reports.Service) *ReportsController {
-	return &ReportsController{svc: svc}
+func NewReportsController(base controllers.Base) *ReportsController {
+	return &ReportsController{base}
 }
 
+// GET /api/admin/units/:unit_guid/reports?limit=10
 func (c *ReportsController) ListReports(ctx *gin.Context) {
-	unit := ctx.Param("unit_guid")
 
-	limit := 0
-	if v := ctx.Query("limit"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil && n > 0 {
-			limit = n
-		}
-	}
-
-	reps, err := c.svc.ListReports(ctx, unit, limit)
+	svc, err := c.ServiceProvider().ReportsService()
 	if err != nil {
-		ctx.JSON(http.StatusConflict, gin.H{"error": err.Error(), "message": "can't get reports"})
+		c.Logger().Error("reports service not available", "err", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	ctx.JSON(http.StatusOK, gin.H{"data": reps})
+	unit := ctx.Param("unit_guid")
+
+	limit, _ := strconv.Atoi(ctx.DefaultQuery("limit", "20"))
+
+	list, err := svc.ListReports(ctx.Request.Context(), unit, limit)
+	if err != nil {
+		c.Logger().Error("list reports failed", "err", err)
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"data": list,
+	})
 }

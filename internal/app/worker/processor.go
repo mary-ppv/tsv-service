@@ -15,6 +15,7 @@ import (
 
 	"tsv-service/internal/models"
 	"tsv-service/internal/repository"
+	"tsv-service/internal/repository/driver"
 )
 
 type Processor struct {
@@ -46,9 +47,13 @@ func NewProcessor(
 }
 
 func (p *Processor) Process(ctx context.Context, file *models.TSVFile) (retErr error) {
+	ctx = driver.ExecutorToContext(ctx, p.db)
+
 	fullPath := filepath.Join(p.inputDir, file.FileName)
 
-	_ = p.filesRepo.SetStatus(ctx, file.ID, "processing", nil)
+	if err := p.filesRepo.SetStatus(ctx, file.ID, "processing", nil); err != nil {
+		return err
+	}
 
 	defer func() {
 		if retErr != nil {
@@ -62,9 +67,6 @@ func (p *Processor) Process(ctx context.Context, file *models.TSVFile) (retErr e
 
 	lines, parseErrs, err := ParseTSVFile(fullPath)
 	if err != nil {
-		msg := err.Error()
-		_ = p.filesRepo.SetStatus(ctx, file.ID, "failed", &msg)
-		_ = p.errorsRepo.AddFileLevel(ctx, file.FileName, file.ID, msg)
 		return err
 	}
 
@@ -90,7 +92,6 @@ func (p *Processor) Process(ctx context.Context, file *models.TSVFile) (retErr e
 			FileName: file.FileName,
 			Error:    pe.Err.Error(),
 		}
-
 		if pe.RawLine != "" {
 			row.RawLine = null.StringFrom(pe.RawLine)
 		}
@@ -124,10 +125,6 @@ func (p *Processor) Process(ctx context.Context, file *models.TSVFile) (retErr e
 			rec.MSGID = null.StringFrom(lines[i].MsgID)
 		}
 
-		if lines[i].MsgID != "" {
-			rec.MSGID = null.StringFrom(lines[i].MsgID)
-		}
-
 		if err := rec.Insert(ctx, exec, boil.Infer()); err != nil {
 			return err
 		}
@@ -147,7 +144,6 @@ func (p *Processor) Process(ctx context.Context, file *models.TSVFile) (retErr e
 		}
 	}
 
-	_ = p.filesRepo.SetStatus(ctx, file.ID, "done", nil)
 	return nil
 }
 

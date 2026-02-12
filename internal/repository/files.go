@@ -14,15 +14,32 @@ import (
 	"github.com/gofrs/uuid/v5"
 
 	"tsv-service/internal/models"
+	"tsv-service/internal/repository/driver"
 )
 
-type FilesRepo struct {
-	db *sql.DB
-}
+type FilesRepo struct{}
 
-func NewFilesRepo(db *sql.DB) *FilesRepo { return &FilesRepo{db: db} }
+func NewFilesRepo() *FilesRepo { return &FilesRepo{} }
 
 func (r *FilesRepo) EnsureQueued(ctx context.Context, filePath string) (*models.TSVFile, bool, error) {
+	exec, err := driver.ExecutorFromContext(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	fileName := filepath.Base(filePath)
+
+	existing, err := models.TSVFiles(
+		models.TSVFileWhere.FileName.EQ(fileName),
+	).One(ctx, exec)
+
+	if err == nil {
+		return existing, false, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, false, err
+	}
+
 	b, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, false, err
@@ -30,28 +47,7 @@ func (r *FilesRepo) EnsureQueued(ctx context.Context, filePath string) (*models.
 	sum := sha256.Sum256(b)
 	sha := hex.EncodeToString(sum[:])
 
-	fileName := filepath.Base(filePath)
-	
-	existing, err := models.TSVFiles(
-		models.TSVFileWhere.FileName.EQ(fileName),
-	).One(ctx, r.db)
-
-	if err == nil {
-		if existing.FileSha256 != sha {
-			existing.FileSha256 = sha
-			existing.Status = "queued"
-			_, _ = existing.Update(ctx, r.db, boil.Infer())
-		}
-		return existing, false, nil
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, false, err
-	}
-
-	id, err := uuid.NewV7()
-	if err != nil {
-		return nil, false, err
-	}
+	id, _ := uuid.NewV7()
 
 	row := &models.TSVFile{
 		ID:         id.String(),
@@ -60,7 +56,7 @@ func (r *FilesRepo) EnsureQueued(ctx context.Context, filePath string) (*models.
 		Status:     "queued",
 	}
 
-	if err := row.Insert(ctx, r.db, boil.Infer()); err != nil {
+	if err := row.Insert(ctx, exec, boil.Infer()); err != nil {
 		return nil, false, err
 	}
 
@@ -68,10 +64,16 @@ func (r *FilesRepo) EnsureQueued(ctx context.Context, filePath string) (*models.
 }
 
 func (r *FilesRepo) SetStatus(ctx context.Context, fileID string, status string, errMsg *string) error {
-	row, err := models.FindTSVFile(ctx, r.db, fileID)
+	exec, err := driver.ExecutorFromContext(ctx)
 	if err != nil {
 		return err
 	}
+
+	row, err := models.FindTSVFile(ctx, exec, fileID)
+	if err != nil {
+		return err
+	}
+
 	row.Status = status
 
 	if errMsg != nil {
@@ -82,14 +84,19 @@ func (r *FilesRepo) SetStatus(ctx context.Context, fileID string, status string,
 		row.ErrorMessage.String = ""
 	}
 
-	_, err = row.Update(ctx, r.db, boil.Infer())
+	_, err = row.Update(ctx, exec, boil.Infer())
 	return err
 }
 
-func (r *FilesRepo) NextQueued(ctx context.Context, limit int) ([]*models.TSVFile, error) {
+func (r *FilesRepo) NextQueued(ctx context.Context, limit int) (models.TSVFileSlice, error) {
+	exec, err := driver.ExecutorFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	return models.TSVFiles(
 		models.TSVFileWhere.Status.EQ("queued"),
 		qm.Limit(limit),
 		qm.OrderBy("created_at asc"),
-	).All(ctx, r.db)
+	).All(ctx, exec)
 }

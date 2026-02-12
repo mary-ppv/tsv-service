@@ -3,27 +3,33 @@ package admin
 import (
 	"net/http"
 	"strconv"
+	"tsv-service/internal/transport/http/controllers"
 
 	"github.com/gin-gonic/gin"
-
-	"tsv-service/internal/services/units"
 )
 
 type UnitsController struct {
-	svc *units.Service
+	controllers.Base
 }
 
-func NewUnitsController(svc *units.Service) *UnitsController {
-	return &UnitsController{svc: svc}
+func NewUnitsController(base controllers.Base) *UnitsController {
+	return &UnitsController{base}
 }
 
+// GET /api/admin/units/:unit_guid/records
 func (c *UnitsController) ListRecords(ctx *gin.Context) {
+	svc, err := c.ServiceProvider().UnitsService()
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
 	unit := ctx.Param("unit_guid")
 
 	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
 	limit, _ := strconv.Atoi(ctx.DefaultQuery("limit", "20"))
 
-	rows, total, err := c.svc.ListRecords(ctx, unit, page, limit)
+	rows, total, err := svc.ListRecords(ctx.Request.Context(), unit, page, limit)
 	if err != nil {
 		ctx.JSON(http.StatusConflict, gin.H{"error": err.Error(), "message": "can't get records"})
 		return

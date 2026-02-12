@@ -54,22 +54,26 @@ func ParseTSVFile(filePath string) ([]ParsedLine, []ParseError, error) {
 		}
 
 		unitCell := strings.TrimSpace(cols[3])
-		lc := strings.ToLower(unitCell)
 
-		if unitCell == "" || lc == "гуид" || lc == "unit_guid" {
-			if len(cols) > 1 {
-				// headers = B.. (пропускаем A/#номер)
-				headers = make([]string, 0, len(cols)-1)
-				for _, h := range cols[1:] {
-					headers = append(headers, strings.TrimSpace(h))
-				}
+		if isHeaderRow(cols) {
+			headers = make([]string, 0, len(cols)-1)
+			for _, h := range cols[1:] {
+				headers = append(headers, strings.TrimSpace(h))
 			}
+			continue
+		}
+
+		if unitCell == "" || !looksLikeGUID(unitCell) {
+			errs = append(errs, ParseError{
+				LineNo:  lineNo,
+				Err:     fmt.Errorf("invalid guid: %q", unitCell),
+				RawLine: raw,
+			})
 			continue
 		}
 
 		unitGuid := unitCell
 
-		// E колонка = msg_id
 		var msgID string
 		if len(cols) > 4 {
 			msgID = strings.TrimSpace(cols[4])
@@ -121,4 +125,35 @@ func ParseTSVFile(filePath string) ([]ParsedLine, []ParseError, error) {
 	}
 
 	return out, errs, nil
+}
+
+func isHeaderRow(cols []string) bool {
+	for _, c := range cols {
+		lc := strings.ToLower(strings.TrimSpace(c))
+		if lc == "гуид" || lc == "guid" || lc == "unit_guid" {
+			return true
+		}
+		if strings.Contains(lc, "гуид") || strings.Contains(lc, "unit_guid") {
+			return true
+		}
+	}
+	return false
+}
+
+func looksLikeGUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	for i, c := range s {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+			continue
+		}
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }

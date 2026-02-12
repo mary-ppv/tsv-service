@@ -2,23 +2,33 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/aarondl/sqlboiler/v4/boil"
 	"github.com/aarondl/sqlboiler/v4/queries/qm"
+	"github.com/gofrs/uuid/v5"
 
 	"tsv-service/internal/models"
+	"tsv-service/internal/repository/driver"
 )
 
-type RecordsRepo struct{ db *sql.DB }
+type RecordsRepo struct{}
 
-func NewRecordsRepo(db *sql.DB) *RecordsRepo { return &RecordsRepo{db: db} }
+func NewRecordsRepo() *RecordsRepo { return &RecordsRepo{} }
 
 func (r *RecordsRepo) Insert(ctx context.Context, rec *models.TSVRecord) error {
-	return rec.Insert(ctx, r.db, boil.Infer())
+	exec, err := driver.ExecutorFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return rec.Insert(ctx, exec, boil.Infer())
 }
 
-func (r *RecordsRepo) ListByUnit(ctx context.Context, unitGuid string, page, limit int) (models.TSVRecordSlice, int64, error) {
+func (r *RecordsRepo) ListByUnit(ctx context.Context, unitGUID string, page, limit int) (models.TSVRecordSlice, int64, error) {
+	exec, err := driver.ExecutorFromContext(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	if page < 1 {
 		page = 1
 	}
@@ -28,25 +38,31 @@ func (r *RecordsRepo) ListByUnit(ctx context.Context, unitGuid string, page, lim
 	offset := (page - 1) * limit
 
 	total, err := models.TSVRecords(
-		models.TSVRecordWhere.UnitGUID.EQ(unitGuid),
-	).Count(ctx, r.db)
+		models.TSVRecordWhere.UnitGUID.EQ(unitGUID),
+	).Count(ctx, exec)
 	if err != nil {
 		return nil, 0, err
 	}
 
 	rows, err := models.TSVRecords(
-		models.TSVRecordWhere.UnitGUID.EQ(unitGuid),
+		models.TSVRecordWhere.UnitGUID.EQ(unitGUID),
 		qm.OrderBy("created_at desc"),
 		qm.Limit(limit),
 		qm.Offset(offset),
-	).All(ctx, r.db)
+	).All(ctx, exec)
 
 	return rows, total, err
 }
 
-func (r *RecordsRepo) DeleteByFile(ctx context.Context, fileID string) error {
-	_, err := models.TSVRecords(
-		models.TSVRecordWhere.FileID.EQ(fileID),
-	).DeleteAll(ctx, r.db)
+func (r *RecordsRepo) DeleteByFile(ctx context.Context, fileID uuid.UUID) error {
+	exec, err := driver.ExecutorFromContext(ctx)
+	if err != nil {
+		return err
+	}
+
+	_, err = models.TSVRecords(
+		models.TSVRecordWhere.FileID.EQ(fileID.String()),
+	).DeleteAll(ctx, exec)
+
 	return err
 }

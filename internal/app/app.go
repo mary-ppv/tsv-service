@@ -5,14 +5,13 @@ import (
 	"database/sql"
 	"log/slog"
 	"os"
-	"tsv-service/internal/services/imports"
-	"tsv-service/internal/services/reports"
-	"tsv-service/internal/services/units"
 
 	"tsv-service/internal/app/config"
 	"tsv-service/internal/app/db"
+	"tsv-service/internal/app/loader"
 	"tsv-service/internal/app/worker"
-	"tsv-service/internal/repository"
+
+	"tsv-service/internal/transport/http/controllers"
 	admin "tsv-service/internal/transport/http/controllers/admin"
 	"tsv-service/internal/transport/http/router"
 )
@@ -37,11 +36,17 @@ func (a *App) Run(ctx context.Context) error {
 	_ = os.MkdirAll(a.cfg.InputDir, 0o755)
 	_ = os.MkdirAll(a.cfg.OutputDir, 0o755)
 
-	filesRepo := repository.NewFilesRepo(a.db)
-	recordsRepo := repository.NewRecordsRepo(a.db)
-	errorsRepo := repository.NewErrorsRepo(a.db)
-	reportsRepo := repository.NewReportsRepo(a.db)
-	unitsRepo := repository.NewUnitsRepo(a.db)
+	logger := slog.Default()
+
+	rp := loader.InitRepositoryProvider(a.db)
+	sp := loader.InitServiceProvider(ctx, rp)
+
+	base := controllers.NewBaseController(logger, sp, rp)
+
+	filesRepo, _ := rp.FilesRepository()
+	recordsRepo, _ := rp.RecordsRepository()
+	errorsRepo, _ := rp.ErrorsRepository()
+	reportsRepo, _ := rp.ReportsRepository()
 
 	reportGen := worker.NewReportGenerator(a.cfg.OutputDir, reportsRepo)
 	processor := worker.NewProcessor(a.db, a.cfg.InputDir, filesRepo, recordsRepo, errorsRepo, reportGen)
@@ -49,19 +54,15 @@ func (a *App) Run(ctx context.Context) error {
 	q := worker.NewQueue(256)
 	q.StartWorkers(ctx, a.cfg.Workers, processor.Process)
 
-	w := worker.NewWatcher(a.cfg.InputDir, a.cfg.PollInterval, filesRepo, q)
+	w := worker.NewWatcher(a.cfg.InputDir, a.cfg.PollInterval, filesRepo, q, a.db)
 	go w.Run(ctx)
 
-	unitsSvc := units.NewService(unitsRepo, recordsRepo)
-	reportsSvc := reports.NewService(reportsRepo)
-	importsSvc := imports.NewService(unitsRepo)
+	unitsCtrl := admin.NewUnitsController(base)
+	reportsCtrl := admin.NewReportsController(base)
+	importsCtrl := admin.NewImportsController(base)
 
-	unitsCtrl := admin.NewUnitsController(unitsSvc)
-	reportsCtrl := admin.NewReportsController(reportsSvc)
-	importsCtrl := admin.NewImportsController(importsSvc)
+	r := router.NewRouter(a.db, unitsCtrl, reportsCtrl, importsCtrl)
 
-	r := router.NewRouter(unitsCtrl, reportsCtrl, importsCtrl)
-
-	slog.Info("http listening", "addr", a.cfg.HTTPAddr)
+	logger.Info("http listening", "addr", a.cfg.HTTPAddr)
 	return r.Run(a.cfg.HTTPAddr)
 }

@@ -2,27 +2,32 @@ package repository
 
 import (
 	"context"
-	"database/sql"
 
 	"github.com/aarondl/sqlboiler/v4/boil"
 	"github.com/aarondl/sqlboiler/v4/queries/qm"
 
 	"tsv-service/internal/models"
+	"tsv-service/internal/repository/driver"
 )
 
-type ReportsRepo struct {
-	db *sql.DB
-}
+type ReportsRepo struct{}
 
-func NewReportsRepo(db *sql.DB) *ReportsRepo {
-	return &ReportsRepo{db: db}
-}
+func NewReportsRepo() *ReportsRepo { return &ReportsRepo{} }
 
 func (r *ReportsRepo) Insert(ctx context.Context, report *models.Report) error {
-	return report.Insert(ctx, r.db, boil.Infer())
+	exec, err := driver.ExecutorFromContext(ctx)
+	if err != nil {
+		return err
+	}
+	return report.Insert(ctx, exec, boil.Infer())
 }
 
 func (r *ReportsRepo) ListByUnit(ctx context.Context, unitGUID string, limit int) (models.ReportSlice, error) {
+	exec, err := driver.ExecutorFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	mods := []qm.QueryMod{
 		models.ReportWhere.UnitGUID.EQ(unitGUID),
 		qm.OrderBy("created_at desc"),
@@ -31,5 +36,5 @@ func (r *ReportsRepo) ListByUnit(ctx context.Context, unitGUID string, limit int
 		mods = append(mods, qm.Limit(limit))
 	}
 
-	return models.Reports(mods...).All(ctx, r.db)
+	return models.Reports(mods...).All(ctx, exec)
 }

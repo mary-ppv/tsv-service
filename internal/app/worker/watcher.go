@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"tsv-service/internal/repository"
+	"tsv-service/internal/repository/driver"
 )
 
 type Watcher struct {
@@ -16,14 +17,30 @@ type Watcher struct {
 	pollInterval time.Duration
 	filesRepo    *repository.FilesRepo
 	queue        *Queue
+	exec         driver.ContextExecutor
 }
 
-func NewWatcher(inputDir string, poll time.Duration, filesRepo *repository.FilesRepo, q *Queue) *Watcher {
-	return &Watcher{inputDir: inputDir, pollInterval: poll, filesRepo: filesRepo, queue: q}
+func NewWatcher(
+	inputDir string,
+	poll time.Duration,
+	filesRepo *repository.FilesRepo,
+	q *Queue,
+	exec driver.ContextExecutor,
+) *Watcher {
+	return &Watcher{
+		inputDir:     inputDir,
+		pollInterval: poll,
+		filesRepo:    filesRepo,
+		queue:        q,
+		exec:         exec,
+	}
 }
 
 func (w *Watcher) Run(ctx context.Context) {
 	slog.Info("watcher started")
+
+	ctx = driver.ExecutorToContext(ctx, w.exec)
+
 	t := time.NewTicker(w.pollInterval)
 	defer t.Stop()
 
@@ -40,13 +57,11 @@ func (w *Watcher) Run(ctx context.Context) {
 }
 
 func (w *Watcher) scanOnce(ctx context.Context) {
-	slog.Info("scan input dir", "dir", w.inputDir)
 	entries, err := os.ReadDir(w.inputDir)
 	if err != nil {
-		slog.Error("read input dir failed", "err", err)
+		slog.Error("read input dir failed", "dir", w.inputDir, "err", err)
 		return
 	}
-	slog.Info("input entries", "count", len(entries))
 
 	for _, e := range entries {
 		if e.IsDir() {
@@ -54,31 +69,18 @@ func (w *Watcher) scanOnce(ctx context.Context) {
 		}
 
 		name := e.Name()
-		slog.Info("found file", "name", name)
-
 		if !strings.HasSuffix(strings.ToLower(name), ".tsv") {
-			slog.Info("skip non-tsv", "name", name)
 			continue
 		}
 
-		slog.Info("tsv accepted", "name", name)
-
 		full := filepath.Join(w.inputDir, name)
+
 		row, created, err := w.filesRepo.EnsureQueued(ctx, full)
 		if err != nil {
 			slog.Error("ensure queued failed", "file", name, "err", err)
 			continue
 		}
 
-		slog.Info("ensure queued result",
-			"file", name,
-			"created", created,
-			"row_id", row.ID,
-			"row_file", row.FileName,
-			"row_sha", row.FileSha256,
-			"row_status", row.Status,
-		)
-		
 		if created {
 			w.queue.Enqueue(row)
 			slog.Info("queued file", "file", name)
